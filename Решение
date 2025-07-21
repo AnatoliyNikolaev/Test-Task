@@ -1,0 +1,77 @@
+✅ 1. Bash-скрипт /usr/local/bin/test_monitor.sh
+bash
+
+#!/bin/bash
+
+PROCESS_NAME="test"
+PID_FILE="/var/run/${PROCESS_NAME}.pid"
+RESTART_LOG="/var/log/monitoring.log"
+ERROR_LOG="/var/log/monitoring1.log"
+MONITOR_URL="https://test.com/monitoring/test/api"
+
+# Получаем текущий PID процесса
+CURRENT_PID=$(pgrep -x "$PROCESS_NAME")
+
+# Если процесс не запущен — выходим
+if [ -z "$CURRENT_PID" ]; then
+    exit 0
+fi
+
+# Проверка, был ли перезапущен
+if [ -f "$PID_FILE" ]; then
+    LAST_PID=$(cat "$PID_FILE")
+    if [ "$LAST_PID" != "$CURRENT_PID" ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - Process '$PROCESS_NAME' was restarted" >> "$RESTART_LOG"
+    fi
+fi
+
+# Обновляем PID-файл
+echo "$CURRENT_PID" > "$PID_FILE"
+
+# Пинг по HTTPS
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time 10 "$MONITOR_URL")
+
+# Логируем, если сервер вернул не 2xx
+if [[ ! "$HTTP_STATUS" =~ ^2[0-9]{2}$ ]]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - Monitoring server not reachable or returned HTTP $HTTP_STATUS" >> "$ERROR_LOG"
+fi
+Сделать исполняемым:
+bash
+
+sudo chmod +x /usr/local/bin/test_monitor.sh
+⚙️ 2. systemd unit: /etc/systemd/system/test_monitor.service
+ini
+
+[Unit]
+Description=Monitor 'test' process and report status
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/test_monitor.sh
+⏱️ 3. systemd timer: /etc/systemd/system/test_monitor.timer
+ini
+
+[Unit]
+Description=Run test_monitor every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Unit=test_monitor.service
+
+[Install]
+WantedBy=timers.target
+🚀 4. Установка и запуск
+bash
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now test_monitor.timer
+📋 Что делает это решение:
+✅ 1. Запуск при старте системы	test_monitor.timer активируется при старте
+✅ 2. Отрабатывает каждую минуту	OnUnitActiveSec=1min в таймере
+✅ 3. Если процесс запущен — делает HTTPS-запрос	curl к https://test.com/monitoring/test/api
+✅ 4. При перезапуске пишет в /var/log/monitoring.log	Сравнение PID
+✅ 5. Если сервер не отвечает — пишет в /var/log/monitoring1.log	Проверка HTTP-статуса
